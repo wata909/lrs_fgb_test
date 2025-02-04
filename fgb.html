@@ -1,0 +1,216 @@
+<html lang="ja">
+  <head>
+    <meta content="text/html; charset=utf-8" http-equiv="Content-Type"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link rel="stylesheet" href="index.css" />
+    <link rel="stylesheet" href="table.css" />
+    <script src="https://unpkg.com/underscore@1.13.1/underscore-min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/flatgeobuf@3.22.0/dist/flatgeobuf-geojson.min.js"></script>
+    <script src="https://unpkg.com/json-formatter-js"></script>
+    <style>
+      #map { height: 900px; }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <script>
+      document.addEventListener("DOMContentLoaded", async () => { 
+        // 基本のLeafletマップ設定
+        let map = L.map('map').setView([34.34, 134.043333333333], 14);
+        L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
+          maxZoom: 18,
+          minZoom: 10,
+          attribution: '<a href="https://www.gsi.go.jp/development/ichiran.html#pale">地理院タイル淡色地図</a>&copy; <a href="https://www.gsi.go.jp/kikakuchousei/kikakuchousei40182.html">国土地理院</a> | <a href="https://www.maff.go.jp/j/tokei/porigon/index.html">筆ポリゴンデータ（2022年度公開）</a>&copy; <a href="https://www.maff.go.jp/">農林水産省</a>'
+        }).addTo(map);
+  
+        // マップ中央の四角領域を取得する関数
+        function getBoundForRect() {
+          const bounds = map.getBounds();
+          const width = map.distance(bounds.getNorthWest(), bounds.getNorthEast());
+          const height = map.distance(bounds.getNorthWest(), bounds.getSouthWest());
+          return map.getCenter().toBounds(Math.min(width, height) * 0.8);
+        }
+  
+        // flatgeobuf用のバウンディングボックス形式に変換
+        function fgBoundingBox() {
+          const bounds = getBoundForRect();
+          return {
+            minX: bounds.getWest(),
+            maxX: bounds.getEast(),
+            minY: bounds.getSouth(),
+            maxY: bounds.getNorth()
+          };
+        }
+  
+        // 青い四角形を表示
+        let rectangle = L.rectangle(getBoundForRect(), { interactive: false, color: "blue", fillOpacity: 0.0, opacity: 1.0 }).addTo(map);
+  
+        // 前回の結果群を管理するレイヤーグループ
+        let previousResults = L.layerGroup().addTo(map);
+  
+        // QMLのシンボル情報を参考に、属性「lu_09」の値によりスタイルを設定する関数
+        function styleForFeature(feature) {
+          const mapping = {
+            "0000": { fillColor: "#ff0000" },   // 解析対象外
+            "0100": { fillColor: "#fff701" },   // 田
+            "0200": { fillColor: "#b37c2a" },   // その他の農用地
+            "0500": { fillColor: "#40a327" },   // 森林
+            "0600": { fillColor: "#ff9600" },   // 荒地
+            "0700": { fillColor: "#a0a0a0" },   // 建物用地
+            "0901": { fillColor: "#000000" },   // 道路
+            "0902": { fillColor: "#000000" },   // 鉄道
+            "1000": { fillColor: "#d78666" },   // その他の用地（学校等）
+            "1100": { fillColor: "#3530c8" },   // 河川地及び湖沼
+            "1400": { fillColor: "#beb297" },   // 海浜
+            "1500": { fillColor: "#3530c8" },   // 海水域
+            "1600": { fillColor: "#ffc800" }    // ゴルフ場
+          };
+          // 属性「lu_09」が存在しない場合は白色で表示
+          const code = feature.properties["lu_09"];
+          const style = mapping[code] || { fillColor: "#ffffff" };
+          return {
+            fillColor: style.fillColor,
+            color: "#232323",  // QMLでは outline_color が 35,35,35
+            weight: 1,
+            fillOpacity: 0.4
+          };
+        }
+  
+        // 結果更新用の関数（マップ移動時などに実行）
+        async function updateResults() {
+          // 以前のレイヤーを削除
+          previousResults.remove();
+          const nextResults = L.layerGroup().addTo(map);
+          previousResults = nextResults;
+  
+          // flatgeobuf API を利用して、バウンディングボックス内のフィーチャのみ取得
+          // 読み込むファイル名を "lumesh.fgb" に変更
+          const iter = flatgeobuf.deserialize('./lumesh.fgb', fgBoundingBox());
+  
+          for await (const feature of iter) {
+            // 各フィーチャに対して、QMLに基づいたスタイルを設定
+            const defaultStyle = styleForFeature(feature);
+  
+            L.geoJSON(feature, {
+              style: defaultStyle
+            }).on({
+              mouseover: function(e) {
+                const layer = e.target;
+                layer.setStyle({
+                  weight: 4,
+                  fillOpacity: 0.8
+                });
+              },
+              mouseout: function(e) {
+                const layer = e.target;
+                layer.setStyle(defaultStyle);
+              },
+              // クリック時にフィーチャの属性情報をポップアップ表示
+              click: function(e) {
+                const props = e.target.feature.properties;
+                let content = '<h4>属性情報</h4><table>';
+                for (const key in props) {
+                  content += `<tr><th>${key}</th><td>${props[key]}</td></tr>`;
+                }
+                content += '</table>';
+                e.target.bindPopup(content).openPopup();
+              }
+            })
+            .addTo(nextResults);
+          }
+          // 青い矩形を最前面に表示
+          rectangle.bringToFront();
+        }
+  
+        // ユーザの操作が頻繁な場合、1秒間隔で更新
+        updateResults = _.throttle(updateResults, 1000);
+  
+        // 初期表示時に結果更新
+        updateResults();
+        // マップの移動終了時にも結果更新
+        map.on("moveend", function() {
+          rectangle.setBounds(getBoundForRect());
+          updateResults();
+        });
+      });
+    </script>
+    <p>
+      このサイトは、同一ディレクトリにある <code>lumesh.fgb</code> の土地利用メッシュデータを表示しています。<br />
+      データは、青い枠内のみ読み込むため、大容量ファイルでも効率的に表示可能です。
+    </p>
+    <p>
+      使用したデータの詳細は<a href="https://github.com/q-japanese-river-basin/QJRB" target="_other">河川上流域土地利用算定ツール</a>を参照してください。
+    </p>
+    <table>
+      <caption>都道府県筆ポリゴンへのリンク（以下は動作しません）</caption>
+      <tbody>
+        <tr>
+          <td colspan="2"><a href=index.html>全国</a></td>
+          <td><a href=fude_2022_31.html>鳥取</a></td>
+          <td><a href=fude_2022_17.html>石川</a></td>
+          <td><a href=fude_2022_16.html>富山</a></td>
+          <td><a href=fude_2022_02.html>青森</a></td>
+          <td><a href=fude_2022_01.html>北海道</a></td>
+        </tr>
+        <tr>
+          <td><a href=fude_2022_35.html>山口</a></td>
+          <td><a href=fude_2022_32.html>島根</a></td>
+          <td><a href=fude_2022_33.html>岡山</a></td>
+          <td><a href=fude_2022_18.html>福井</a></td>
+          <td><a href=fude_2022_15.html>新潟</a></td>
+          <td><a href=fude_2022_05.html>秋田</a></td>
+          <td><a href=fude_2022_03.html>岩手</a></td>
+        </tr>
+        <tr>
+          <td><a href=fude_2022_42.html>長崎</a></td>
+          <td><a href=fude_2022_40.html>福岡</a></td>
+          <td><a href=fude_2022_34.html>広島</a></td>
+          <td><a href=fude_2022_25.html>滋賀</a></td>
+          <td><a href=fude_2022_20.html>長野</a></td>
+          <td><a href=fude_2022_06.html>山形</a></td>
+          <td><a href=fude_2022_04.html>宮城</a></td>
+        </tr>
+        <tr>
+          <td><a href=fude_2022_41.html>佐賀</a></td>
+          <td><a href=fude_2022_44.html>大分</a></td>
+          <td><a href=fude_2022_28.html>兵庫</a></td>
+          <td><a href=fude_2022_26.html>京都</a></td>
+          <td><a href=fude_2022_19.html>山梨</a></td>
+          <td><a href=fude_2022_10.html>群馬</a></td>
+          <td><a href=fude_2022_07.html>福島</a></td>
+        </tr>
+        <tr>
+          <td><a href=fude_2022_43.html>熊本</a></td>
+          <td><a href=fude_2022_45.html>宮崎</a></td>
+          <td><a href=fude_2022_27.html>大阪</a></td>
+          <td><a href=fude_2022_29.html>奈良</a></td>
+          <td><a href=fude_2022_21.html>岐阜</a></td>
+          <td><a href=fude_2022_11.html>埼玉</a></td>
+          <td><a href=fude_2022_09.html>栃木</a></td>
+        </tr>
+        <tr>
+          <td><a href=fude_2022_46.html>鹿児島</a></td>
+          <td><a href=fude_2022_38.html>愛媛</a></td>
+          <td><a href=fude_2022_37.html>香川</a></td>
+          <td><a href=fude_2022_30.html>和歌山</a></td>
+          <td><a href=fude_2022_22.html>静岡</a></td>
+          <td><a href=fude_2022_13.html>東京</a></td>
+          <td><a href=fude_2022_08.html>茨城</a></td>
+        </tr>
+        <tr>
+          <td><a href=fude_2022_47.html>沖縄</a></td>
+          <td><a href=fude_2022_39.html>高知</a></td>
+          <td><a href=fude_2022_36.html>徳島</a></td>
+          <td><a href=fude_2022_24.html>三重</a></td>
+          <td><a href=fude_2022_23.html>愛知</a></td>
+          <td><a href=fude_2022_14.html>神奈川</a></td>
+          <td><a href=fude_2022_01.html>千葉</a></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="credit">
+      カラム配置出典：カラム地図メーカー CC BY <a href=https://github.com/tabularmaps/hq>カラム地図 / TabularMaps on Github</a><br>
+    </p>
+  </body>
+</html>
