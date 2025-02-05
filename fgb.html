@@ -10,13 +10,18 @@
     <script src="https://unpkg.com/json-formatter-js"></script>
     <style>
       #map { height: 900px; }
+      .popup-content {
+        font-size: 12px;
+        max-width: 250px;
+        white-space: normal;
+      }
     </style>
   </head>
   <body>
     <div id="map"></div>
     <script>
       document.addEventListener("DOMContentLoaded", async () => { 
-        // 基本のLeafletマップ設定（初期ズームは14）
+        // Leaflet マップ設定
         let map = L.map('map').setView([34.34, 134.043333333333], 14);
         L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
           maxZoom: 18,
@@ -24,7 +29,7 @@
           attribution: '<a href="https://www.gsi.go.jp/development/ichiran.html#pale">地理院タイル淡色地図</a>&copy; <a href="https://www.gsi.go.jp/kikakuchousei/kikakuchousei40182.html">国土地理院</a> | <a href="https://www.maff.go.jp/j/tokei/porigon/index.html">筆ポリゴンデータ（2022年度公開）</a>&copy; <a href="https://www.maff.go.jp/">農林水産省</a>'
         }).addTo(map);
   
-        // マップ中央の四角領域を取得する関数
+        // マップ中央の四角領域を取得
         function getBoundForRect() {
           const bounds = map.getBounds();
           const width = map.distance(bounds.getNorthWest(), bounds.getNorthEast());
@@ -32,7 +37,7 @@
           return map.getCenter().toBounds(Math.min(width, height) * 0.8);
         }
   
-        // flatgeobuf用のバウンディングボックス形式に変換
+        // flatgeobuf用バウンディングボックス
         function fgBoundingBox() {
           const bounds = getBoundForRect();
           return {
@@ -43,7 +48,7 @@
           };
         }
   
-        // 青いバウンディングボックスを表示
+        // 青いバウンディングボックス
         let rectangle = L.rectangle(getBoundForRect(), { 
           interactive: false, 
           color: "blue", 
@@ -51,10 +56,10 @@
           opacity: 1.0 
         }).addTo(map);
   
-        // 前回の結果群を管理するレイヤーグループ
+        // 前回の結果群を管理
         let previousResults = L.layerGroup().addTo(map);
   
-        // QMLのシンボル情報を参考に、属性「lu_09」の値によりスタイルを設定する関数
+        // QMLのシンボル情報を参考にスタイルを設定
         function styleForFeature(feature) {
           const mapping = {
             "0000": { fillColor: "#ff0000" },   // 解析対象外
@@ -71,25 +76,24 @@
             "1500": { fillColor: "#3530c8" },   // 海水域
             "1600": { fillColor: "#ffc800" }    // ゴルフ場
           };
-          // 属性「lu_09」が存在しない場合は白色で表示
           const code = feature.properties["lu_09"];
           const style = mapping[code] || { fillColor: "#ffffff" };
           return {
             fillColor: style.fillColor,
-            color: "#232323",  // QMLでは outline_color が 35,35,35
+            color: "#232323",
             weight: 1,
             fillOpacity: 0.4
           };
         }
   
-        // onEachFeature コールバックで各フィーチャにポップアップをバインド
+        // onEachFeature を利用してポップアップを作成
         function onEachFeature(feature, layer) {
           if (feature.properties) {
-            let content = '<h4>属性情報</h4><table>';
+            let content = '<div class="popup-content">';
             for (const key in feature.properties) {
-              content += `<tr><th>${key}</th><td>${feature.properties[key]}</td></tr>`;
+              content += `${key}: ${feature.properties[key]}<br>`;
             }
-            content += '</table>';
+            content += '</div>';
             layer.bindPopup(content);
           }
           // マウスオーバー／アウトでスタイル変更
@@ -103,18 +107,16 @@
           });
         }
   
-        // 結果更新用の関数（マップ移動時などに実行）
+        // 結果更新用の関数
         async function updateResults() {
-          // 以前のレイヤーを削除
           previousResults.remove();
           const nextResults = L.layerGroup().addTo(map);
           previousResults = nextResults;
   
-          // flatgeobuf API を利用して、バウンディングボックス内のフィーチャを取得
+          // flatgeobuf API を利用してフィーチャを取得
           const iter = flatgeobuf.deserialize('./lumesh.fgb', fgBoundingBox());
   
           for await (const feature of iter) {
-            // ジオメトリがない場合はスキップ
             if (!feature.geometry) continue;
   
             L.geoJSON(feature, {
@@ -126,12 +128,11 @@
           rectangle.bringToFront();
         }
   
-        // ユーザ操作が頻繁な場合、1秒間隔に制限
+        // 1秒間隔に制限
         updateResults = _.throttle(updateResults, 1000);
   
-        // 初期表示時に結果更新
+        // 初期表示・移動終了時に更新
         updateResults();
-        // マップ移動終了時にも更新
         map.on("moveend", function() {
           rectangle.setBounds(getBoundForRect());
           updateResults();
@@ -140,27 +141,7 @@
     </script>
     <p>
       このサイトは、同一ディレクトリにある <code>lumesh.fgb</code> の土地利用メッシュデータを表示しています。<br />
-      青い枠は表示されています。
-    </p>
-    <p>
-      使用したデータの詳細は<a href="https://github.com/q-japanese-river-basin/QJRB" target="_other">河川上流域土地利用算定ツール</a>を参照してください。
-    </p>
-    <table>
-      <caption>都道府県筆ポリゴンへのリンク（以下は動作しません）</caption>
-      <tbody>
-        <tr>
-          <td colspan="2"><a href="index.html">全国</a></td>
-          <td><a href="fude_2022_31.html">鳥取</a></td>
-          <td><a href="fude_2022_17.html">石川</a></td>
-          <td><a href="fude_2022_16.html">富山</a></td>
-          <td><a href="fude_2022_02.html">青森</a></td>
-          <td><a href="fude_2022_01.html">北海道</a></td>
-        </tr>
-        <!-- 以下略 -->
-      </tbody>
-    </table>
-    <p class="credit">
-      カラム配置出典：カラム地図メーカー CC BY <a href="https://github.com/tabularmaps/hq">カラム地図 / TabularMaps on Github</a><br>
+      青い枠内のみが読み込まれます。
     </p>
   </body>
 </html>
