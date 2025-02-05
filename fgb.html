@@ -2,12 +2,9 @@
   <head>
     <meta content="text/html; charset=utf-8" http-equiv="Content-Type"/>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
-    <link rel="stylesheet" href="index.css" />
-    <link rel="stylesheet" href="table.css" />
     <script src="https://unpkg.com/underscore@1.13.1/underscore-min.js"></script>
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script src="https://unpkg.com/flatgeobuf@3.22.0/dist/flatgeobuf-geojson.min.js"></script>
-    <script src="https://unpkg.com/json-formatter-js"></script>
     <style>
       #map { height: 900px; }
       .popup-content {
@@ -21,23 +18,20 @@
     <div id="map"></div>
     <script>
       document.addEventListener("DOMContentLoaded", async () => { 
-        // Leaflet マップ設定
         let map = L.map('map').setView([34.34, 134.043333333333], 14);
         L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
           maxZoom: 18,
           minZoom: 10,
-          attribution: '<a href="https://www.gsi.go.jp/development/ichiran.html#pale">地理院タイル淡色地図</a>&copy; <a href="https://www.gsi.go.jp/kikakuchousei/kikakuchousei40182.html">国土地理院</a> | <a href="https://www.maff.go.jp/j/tokei/porigon/index.html">筆ポリゴンデータ（2022年度公開）</a>&copy; <a href="https://www.maff.go.jp/">農林水産省</a>'
+          attribution: '<a href="https://www.gsi.go.jp/development/ichiran.html#pale">地理院タイル淡色地図</a>&copy; <a href="https://www.gsi.go.jp/kikakuchousei/kikakuchousei40182.html">国土地理院</a>'
         }).addTo(map);
   
-        // マップ中央の四角領域を取得
         function getBoundForRect() {
           const bounds = map.getBounds();
           const width = map.distance(bounds.getNorthWest(), bounds.getNorthEast());
           const height = map.distance(bounds.getNorthWest(), bounds.getSouthWest());
-          return map.getCenter().toBounds(Math.min(width, height) * 0.8);
+          return map.getCenter().toBounds(Math.min(width, height) * 0.9); // **90% に拡大**
         }
   
-        // flatgeobuf用バウンディングボックス
         function fgBoundingBox() {
           const bounds = getBoundForRect();
           return {
@@ -48,7 +42,6 @@
           };
         }
   
-        // 青いバウンディングボックス
         let rectangle = L.rectangle(getBoundForRect(), { 
           interactive: false, 
           color: "blue", 
@@ -56,25 +49,23 @@
           opacity: 1.0 
         }).addTo(map);
   
-        // 前回の結果群を管理
         let previousResults = L.layerGroup().addTo(map);
   
-        // QMLのシンボル情報を参考にスタイルを設定
         function styleForFeature(feature) {
           const mapping = {
-            "0000": { fillColor: "#ff0000" },   // 解析対象外
-            "0100": { fillColor: "#fff701" },   // 田
-            "0200": { fillColor: "#b37c2a" },   // その他の農用地
-            "0500": { fillColor: "#40a327" },   // 森林
-            "0600": { fillColor: "#ff9600" },   // 荒地
-            "0700": { fillColor: "#a0a0a0" },   // 建物用地
-            "0901": { fillColor: "#000000" },   // 道路
-            "0902": { fillColor: "#000000" },   // 鉄道
-            "1000": { fillColor: "#d78666" },   // その他の用地（学校等）
-            "1100": { fillColor: "#3530c8" },   // 河川地及び湖沼
-            "1400": { fillColor: "#beb297" },   // 海浜
-            "1500": { fillColor: "#3530c8" },   // 海水域
-            "1600": { fillColor: "#ffc800" }    // ゴルフ場
+            "0000": { fillColor: "#ff0000" },
+            "0100": { fillColor: "#fff701" },
+            "0200": { fillColor: "#b37c2a" },
+            "0500": { fillColor: "#40a327" },
+            "0600": { fillColor: "#ff9600" },
+            "0700": { fillColor: "#a0a0a0" },
+            "0901": { fillColor: "#000000" },
+            "0902": { fillColor: "#000000" },
+            "1000": { fillColor: "#d78666" },
+            "1100": { fillColor: "#3530c8" },
+            "1400": { fillColor: "#beb297" },
+            "1500": { fillColor: "#3530c8" },
+            "1600": { fillColor: "#ffc800" }
           };
           const code = feature.properties["lu_09"];
           const style = mapping[code] || { fillColor: "#ffffff" };
@@ -86,7 +77,6 @@
           };
         }
   
-        // onEachFeature を利用してポップアップを作成
         function onEachFeature(feature, layer) {
           if (feature.properties) {
             let content = '<div class="popup-content">';
@@ -96,7 +86,6 @@
             content += '</div>';
             layer.bindPopup(content);
           }
-          // マウスオーバー／アウトでスタイル変更
           layer.on({
             mouseover: function(e) {
               layer.setStyle({ weight: 4, fillOpacity: 0.8 });
@@ -107,13 +96,16 @@
           });
         }
   
-        // 結果更新用の関数
         async function updateResults() {
+          if (map.getZoom() < 15) {
+            previousResults.clearLayers();
+            return;
+          }
+
           previousResults.remove();
           const nextResults = L.layerGroup().addTo(map);
           previousResults = nextResults;
   
-          // flatgeobuf API を利用してフィーチャを取得
           const iter = flatgeobuf.deserialize('./lumesh.fgb', fgBoundingBox());
   
           for await (const feature of iter) {
@@ -124,24 +116,20 @@
               onEachFeature: onEachFeature
             }).addTo(nextResults);
           }
-          // 青い矩形を最前面に表示
+          rectangle.setBounds(getBoundForRect()); // **青枠のサイズを更新**
           rectangle.bringToFront();
         }
   
-        // 1秒間隔に制限
         updateResults = _.throttle(updateResults, 1000);
   
-        // 初期表示・移動終了時に更新
         updateResults();
-        map.on("moveend", function() {
-          rectangle.setBounds(getBoundForRect());
-          updateResults();
-        });
+        map.on("moveend", updateResults);
+        map.on("zoomend", updateResults);
       });
     </script>
     <p>
-      このサイトは、同一ディレクトリにある <code>lumesh.fgb</code> の土地利用メッシュデータを表示しています。<br />
-      青い枠内のみが読み込まれます。
+      このサイトは、 <code>lumesh.fgb</code> の土地利用メッシュデータを表示しています。<br />
+      **ズームレベル15以上でデータが表示されます**。
     </p>
   </body>
 </html>
