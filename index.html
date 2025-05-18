@@ -2,6 +2,7 @@
   <head>
     <meta content="text/html; charset=utf-8" http-equiv="Content-Type"/>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link rel="stylesheet" href="index.css" /> <!-- index.css を読み込む -->
     <script src="https://unpkg.com/underscore@1.13.1/underscore-min.js"></script>
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script src="https://unpkg.com/flatgeobuf@3.22.0/dist/flatgeobuf-geojson.min.js"></script>
@@ -17,7 +18,7 @@
   <body>
     <div id="map"></div>
     <script>
-      document.addEventListener("DOMContentLoaded", async () => { 
+      document.addEventListener("DOMContentLoaded", async () => {
         let map = L.map('map').setView([34.34, 134.043333333333], 14);
         L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
           maxZoom: 18,
@@ -26,7 +27,7 @@
         }).addTo(map);
   
         function fgBoundingBox() {
-          const bounds = map.getBounds(); // **表示範囲全体を取得**
+          const bounds = map.getBounds();
           return {
             minX: bounds.getWest(),
             maxX: bounds.getEast(),
@@ -34,9 +35,13 @@
             maxY: bounds.getNorth()
           };
         }
-  
-        let previousResults = L.layerGroup().addTo(map);
-  
+
+        // --- basin ---
+        // LayerGroup を分けて管理
+        let landuseLayer = L.layerGroup().addTo(map);
+        let basinLayer   = L.layerGroup().addTo(map);
+        let riverLayer   = L.layerGroup().addTo(map);
+
         function styleForFeature(feature) {
           const mapping = {
             "0000": { fillColor: "#ff0000" },
@@ -81,29 +86,65 @@
             }
           });
         }
-  
+
+        // --- basin ---
+        function styleBasin(feature) {
+          return {
+            color: 'blue',
+            weight: 5,
+            fillOpacity: 0
+          };
+        }
+
+        // --- river ---
+        function styleRiver(feature) {
+          return {
+            color: 'cyan',
+            weight: 5,
+            dashArray: '4,4',
+            fillOpacity: 0
+          };
+        }
+
         async function updateResults() {
-          // **ズームレベル14未満ならデータを削除**
           if (map.getZoom() < 14) {
-            previousResults.clearLayers();
+            landuseLayer.clearLayers();
             return;
           }
 
-          previousResults.clearLayers();
-          const nextResults = L.layerGroup().addTo(map);
-          previousResults = nextResults;
-  
-          // **表示範囲全体を対象にデータを取得**
-          const iter = flatgeobuf.deserialize('./lumesh.fgb', fgBoundingBox());
-  
-          for await (const feature of iter) {
+          // 各 LayerGroup をクリア
+          landuseLayer.clearLayers();
+          basinLayer.clearLayers();
+          riverLayer.clearLayers();
+
+          const bbox = fgBoundingBox();
+
+          // --- basin ---
+          for await (const feature of flatgeobuf.deserialize(
+                'https://wata909.github.io/lrs_fgb_test/basin.fgb', bbox)) {
             if (!feature.geometry) continue;
-  
+            L.geoJSON(feature, {
+              style: styleBasin
+            }).addTo(basinLayer);
+          }
+          // --- landuse ---
+          for await (const feature of flatgeobuf.deserialize('./lumesh.fgb', bbox)) {
+            if (!feature.geometry) continue;
             L.geoJSON(feature, {
               style: styleForFeature(feature),
               onEachFeature: onEachFeature
-            }).addTo(nextResults);
+            }).addTo(landuseLayer);
           }
+
+          // --- river ---
+          for await (const feature of flatgeobuf.deserialize(
+                'https://wata909.github.io/lrs_fgb_test/network.fgb', bbox)) {
+            if (!feature.geometry) continue;
+            L.geoJSON(feature, {
+              style: styleRiver
+            }).addTo(riverLayer);
+          }
+
         }
   
         updateResults = _.throttle(updateResults, 1000);

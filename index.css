@@ -85,5 +85,20 @@ ul.secondary-navigation li a {
     right: 8px;
 }
 .ol-popup-closer:after {
-    content: "âœ–";
+    content: "✖";
+}
+
+/* --- basin layer style --- */
+.basin {
+  fill: none;
+  stroke: blue;
+  stroke-width: 1;
+}
+
+/* --- river layer style --- */
+.river {
+  fill: none;
+  stroke: cyan;
+  stroke-width: 1;
+  stroke-dasharray: 4,4;
 }
